@@ -1,0 +1,191 @@
+#!/usr/bin/env bash
+# daily-digest — morning digest generator for an Obsidian vault
+#
+# Generates a structured markdown digest into a configured vault, including
+# weather, git activity, GitHub PRs, and a rotating quote. Idempotent per
+# day; safe to re-run.
+#
+# Configuration is read from $XDG_CONFIG_HOME/daily-digest/config.env
+# (default ~/.config/daily-digest/config.env). Copy config.env.example and
+# edit it to suit.
+
+set -euo pipefail
+
+# Ensure cron's minimal PATH finds our tools
+export PATH="/usr/local/bin:/usr/bin:/bin:$HOME/.local/bin:$HOME/bin:$PATH"
+
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/daily-digest"
+CONFIG_FILE="${DAILY_DIGEST_CONFIG:-$CONFIG_DIR/config.env}"
+
+if [[ ! -f "$CONFIG_FILE" ]]; then
+    cat >&2 <<EOF
+daily-digest: no config at $CONFIG_FILE
+
+Create one by copying the example from the project root:
+
+    mkdir -p "$CONFIG_DIR"
+    cp config.env.example "$CONFIG_FILE"
+    \$EDITOR "$CONFIG_FILE"
+
+Or point DAILY_DIGEST_CONFIG at a different file.
+EOF
+    exit 1
+fi
+
+# shellcheck disable=SC1090
+source "$CONFIG_FILE"
+
+: "${VAULT:?VAULT must be set in $CONFIG_FILE (path to your Obsidian vault)}"
+: "${LOCATION:?LOCATION must be set in $CONFIG_FILE (city name for weather)}"
+: "${GH_USER:?GH_USER must be set in $CONFIG_FILE (GitHub username)}"
+: "${DAILY_SUBDIR:=10-Daily}"
+: "${QUOTES_PATH:=40-Resources/Quotes.md}"
+
+# REPO_PARENTS is expected to be a bash array declared in the config file.
+# If it wasn't set, fall back to scanning the vault only.
+if ! declare -p REPO_PARENTS >/dev/null 2>&1; then
+    REPO_PARENTS=("$VAULT")
+fi
+
+DATE="$(date +%Y-%m-%d)"
+LONG_DATE="$(date '+%A, %B %-d, %Y')"
+DAILY_DIR="$VAULT/$DAILY_SUBDIR"
+QUOTES_FILE="$VAULT/$QUOTES_PATH"
+OUT="$DAILY_DIR/${DATE}.md"
+
+mkdir -p "$DAILY_DIR"
+
+# Idempotency: skip if today's digest already exists and was written today
+if [[ -f "$OUT" && "$(date -r "$OUT" +%Y-%m-%d)" == "$DATE" ]]; then
+    echo "Digest already present for $DATE; not overwriting." >&2
+    exit 0
+fi
+
+fetch_weather() {
+    local data temp feels desc hi lo
+    if ! data=$(curl -fsS --max-time 10 "https://wttr.in/${LOCATION}?format=j1" 2>/dev/null); then
+        echo "_weather unavailable_"
+        return
+    fi
+    temp=$(echo "$data" | jq -r '.current_condition[0].temp_C')
+    feels=$(echo "$data" | jq -r '.current_condition[0].FeelsLikeC')
+    desc=$(echo "$data" | jq -r '.current_condition[0].weatherDesc[0].value')
+    hi=$(echo "$data" | jq -r '.weather[0].maxtempC')
+    lo=$(echo "$data" | jq -r '.weather[0].mintempC')
+    echo "**${desc}**, ${temp}°C (feels ${feels}°C) · Today: ${lo}°C → ${hi}°C"
+}
+
+fetch_git_activity() {
+    local since="24 hours ago"
+    local found=0 gitdir repo log
+    for parent in "${REPO_PARENTS[@]}"; do
+        [[ -d "$parent" ]] || continue
+        while IFS= read -r -d '' gitdir; do
+            repo=$(dirname "$gitdir")
+            log=$(git -C "$repo" log --since="$since" --pretty=format:"- \`$(basename "$repo")\` %h — %s (%an)" 2>/dev/null || true)
+            if [[ -n "$log" ]]; then
+                echo "$log"
+                found=1
+            fi
+        done < <(find "$parent" -maxdepth 3 -type d -name ".git" -print0 2>/dev/null)
+    done
+    [[ "$found" == "0" ]] && echo "_no commits in the last 24 hours_"
+}
+
+fetch_prs() {
+    if ! command -v gh >/dev/null 2>&1; then
+        echo "_gh CLI not installed_"
+        return
+    fi
+    if ! gh auth status >/dev/null 2>&1; then
+        echo "_gh not authenticated — run \`gh auth login\`_"
+        return
+    fi
+
+    local authored review
+    authored=$(gh search prs --author="$GH_USER" --state=open --limit 10 --json url,title,repository 2>/dev/null || echo "[]")
+    review=$(gh search prs --review-requested="$GH_USER" --state=open --limit 10 --json url,title,repository 2>/dev/null || echo "[]")
+
+    echo "**Authored (open):**"
+    if [[ "$(echo "$authored" | jq 'length')" == "0" ]]; then
+        echo "- _none_"
+    else
+        echo "$authored" | jq -r '.[] | "- [\(.repository.nameWithOwner) — \(.title)](\(.url))"'
+    fi
+
+    echo ""
+    echo "**Awaiting your review:**"
+    if [[ "$(echo "$review" | jq 'length')" == "0" ]]; then
+        echo "- _none_"
+    else
+        echo "$review" | jq -r '.[] | "- [\(.repository.nameWithOwner) — \(.title)](\(.url))"'
+    fi
+}
+
+fetch_quote() {
+    if [[ ! -f "$QUOTES_FILE" ]]; then
+        echo "_no quotes file at $QUOTES_FILE_"
+        return
+    fi
+    local count n
+    count=$(grep -c "^- " "$QUOTES_FILE" 2>/dev/null || echo 0)
+    if [[ "$count" -eq 0 ]]; then
+        echo "_no quotes in file yet_"
+        return
+    fi
+    n=$(( (RANDOM % count) + 1 ))
+    grep "^- " "$QUOTES_FILE" | sed -n "${n}p" | sed 's/^- //'
+}
+
+# Render to temp, move atomically so Obsidian never sees a half-written file
+TMP=$(mktemp)
+trap 'rm -f "$TMP"' EXIT
+
+{
+cat <<EOF
+---
+date: ${DATE}
+tags: [daily, digest]
+generated: $(date -Iseconds)
+---
+
+# ${LONG_DATE}
+
+## Weather · ${LOCATION}
+
+$(fetch_weather)
+
+## Quote of the day
+
+> $(fetch_quote)
+
+## Tasks
+
+<!-- placeholder: wire to your task source -->
+-
+
+## Calendar
+
+<!-- placeholder: source TBD -->
+
+## Git activity (last 24h)
+
+$(fetch_git_activity)
+
+## GitHub PRs
+
+$(fetch_prs)
+
+## News
+
+<!-- placeholder: curate sources separately -->
+
+## Notes
+
+-
+EOF
+} > "$TMP"
+
+mv "$TMP" "$OUT"
+trap - EXIT
+echo "Wrote digest to $OUT"

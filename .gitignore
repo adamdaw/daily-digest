@@ -1,0 +1,15 @@
+# Local config should never be committed — live config lives in
+# $XDG_CONFIG_HOME/daily-digest/, not here. But if someone drops a
+# config.env into the repo root by mistake, keep it out.
+config.env
+.env
+
+# Logs if run locally from the repo
+*.log
+
+# Editor cruft
+.DS_Store
+*.swp
+*.swo
+.vscode/
+.idea/
