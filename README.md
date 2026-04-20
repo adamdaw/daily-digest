@@ -72,5 +72,4 @@ overwrite a file that was already written today.
 
 ## License
 
-No license is currently declared. Don't assume permissions beyond personal
-use until one is added.
+MIT. See [LICENSE](LICENSE).
