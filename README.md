@@ -3,11 +3,12 @@
 A small, dependency-light generator that writes a structured morning digest
 into an Obsidian vault. Each day it drops a markdown note containing:
 
-- Current weather
-- A rotating quote of the day
+- Current weather (wttr.in, with retry + plain-text fallback)
+- Quote of the day (zenquotes.io, falling back to a local quotes file)
 - Git activity across configured repo folders (last 24h)
 - Open GitHub PRs you authored, and those awaiting your review
-- Placeholder sections for tasks, calendar, and news (wire up as you like)
+- News headlines from any RSS/Atom feeds you configure
+- Placeholder sections for tasks and calendar (wire up as you like)
 
 Idempotent per day — safe to re-run.
 
@@ -15,6 +16,7 @@ Idempotent per day — safe to re-run.
 
 - `bash` (4+)
 - `curl`, `jq`, `git`, `find`, `sed`, `grep`, `date`
+- `python3` (stdlib only — used to parse RSS/Atom feeds for the News section)
 - [`gh`](https://cli.github.com/) CLI, authenticated, for the PR section
 - An Obsidian vault (or any directory; the script just writes markdown)
 
@@ -67,8 +69,10 @@ overwrite a file that was already written today.
 - **Graceful degradation.** Each section handles its own failure (network
   errors, missing auth, absent config) with a human-readable placeholder
   rather than aborting the whole run.
-- **Pluggable surfaces.** Tasks, calendar, and news are placeholders by
-  design — every user's sources differ. Swap in whatever fetcher you like.
+- **Pluggable surfaces.** News is config-driven (`NEWS_FEEDS` in
+  `config.env`) so you can swap sources without editing the script. Tasks
+  and calendar are still placeholders — wire them up to whatever source
+  you use.
 
 ## License
 
