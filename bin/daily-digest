@@ -40,6 +40,7 @@ source "$CONFIG_FILE"
 : "${GH_USER:?GH_USER must be set in $CONFIG_FILE (GitHub username)}"
 : "${DAILY_SUBDIR:=10-Daily}"
 : "${QUOTES_PATH:=40-Resources/Quotes.md}"
+: "${TODOS_PATH:=30-Areas/Daily Reading/_pending-acquisitions.md}"
 
 # REPO_PARENTS is expected to be a bash array declared in the config file.
 # If it wasn't set, fall back to scanning the vault only.
@@ -51,6 +52,7 @@ DATE="$(date +%Y-%m-%d)"
 LONG_DATE="$(date '+%A, %B %-d, %Y')"
 DAILY_DIR="$VAULT/$DAILY_SUBDIR"
 QUOTES_FILE="$VAULT/$QUOTES_PATH"
+TODOS_FILE="$VAULT/$TODOS_PATH"
 OUT="$DAILY_DIR/${DATE}.md"
 
 mkdir -p "$DAILY_DIR"
@@ -167,6 +169,44 @@ fetch_quote() {
     grep "^- " "$QUOTES_FILE" | sed -n "${n}p" | sed 's/^- //'
 }
 
+fetch_todos() {
+    if [[ ! -f "$TODOS_FILE" ]]; then
+        echo "<!-- no todo file at $TODOS_FILE -->"
+        echo "-"
+        return
+    fi
+    # Pull bullet items only ("- ..." or "  - ..."), preserving headers (## ...)
+    # so the section structure carries through. Skip code fences and metadata.
+    local in_yaml=0 in_code=0
+    while IFS= read -r line; do
+        case "$line" in
+            "---")
+                if [[ $in_yaml -eq 0 ]]; then in_yaml=1; else in_yaml=0; fi
+                continue
+                ;;
+            '```'*)
+                if [[ $in_code -eq 0 ]]; then in_code=1; else in_code=0; fi
+                continue
+                ;;
+        esac
+        [[ $in_yaml -eq 1 || $in_code -eq 1 ]] && continue
+        # Surface section headers (## or ###) and bullet items
+        case "$line" in
+            "## "*|"### "*)
+                # Skip the top-level title and the meta sections at the bottom
+                case "$line" in
+                    "## How to use"*|"# Pending"*) continue ;;
+                esac
+                echo ""
+                echo "$line"
+                ;;
+            "- "*|"  - "*|"~~- "*)
+                echo "$line"
+                ;;
+        esac
+    done < "$TODOS_FILE"
+}
+
 fetch_news() {
     if ! declare -p NEWS_FEEDS >/dev/null 2>&1 || [[ ${#NEWS_FEEDS[@]} -eq 0 ]]; then
         echo "<!-- placeholder: set NEWS_FEEDS in $CONFIG_FILE -->"
@@ -257,8 +297,7 @@ $(fetch_weather)
 
 ## Tasks
 
-<!-- placeholder: wire to your task source -->
--
+$(fetch_todos)
 
 ## Calendar
 
