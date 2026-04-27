@@ -177,7 +177,9 @@ fetch_todos() {
     fi
     # Pull bullet items only ("- ..." or "  - ..."), preserving headers (## ...)
     # so the section structure carries through. Skip code fences and metadata.
-    local in_yaml=0 in_code=0
+    # Sections whose heading text is fully struck through (## ~~...~~) are
+    # treated as completed and suppressed entirely (heading + bullets).
+    local in_yaml=0 in_code=0 skip_section=0
     while IFS= read -r line; do
         case "$line" in
             "---")
@@ -192,15 +194,21 @@ fetch_todos() {
         [[ $in_yaml -eq 1 || $in_code -eq 1 ]] && continue
         # Surface section headers (## or ###) and bullet items
         case "$line" in
+            "## ~~"*|"### ~~"*)
+                skip_section=1
+                continue
+                ;;
+            "## How to use"*)
+                skip_section=1
+                continue
+                ;;
             "## "*|"### "*)
-                # Skip the top-level title and the meta sections at the bottom
-                case "$line" in
-                    "## How to use"*|"# Pending"*) continue ;;
-                esac
+                skip_section=0
                 echo ""
                 echo "$line"
                 ;;
             "- "*|"  - "*|"~~- "*)
+                [[ $skip_section -eq 1 ]] && continue
                 echo "$line"
                 ;;
         esac
