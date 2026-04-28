@@ -70,9 +70,11 @@ overwrite a file that was already written today.
   errors, missing auth, absent config) with a human-readable placeholder
   rather than aborting the whole run.
 - **Pluggable surfaces.** News is config-driven (`NEWS_FEEDS` in
-  `config.env`) so you can swap sources without editing the script. Tasks
-  and calendar are still placeholders — wire them up to whatever source
-  you use.
+  `config.env`) so you can swap sources without editing the script. The
+  reading-pickup section pulls one item per day from the file at
+  `TODOS_PATH`. The writing-prompt section picks one project per day from
+  `$FICTION_DIR` (default `~/Writing/Fiction`). Calendar is still a
+  placeholder — wire it up to whatever source you use.
 
 ## License
 

@@ -170,16 +170,19 @@ fetch_quote() {
 }
 
 fetch_todos() {
+    # One book per day from $TODOS_FILE. Picks an unstruck bullet from a
+    # non-skipped section, deterministic by date so the digest is stable
+    # for the day. Sections with struck headings (## ~~...~~), the
+    # "How to use" section, and the "Reading revisits" cadence section
+    # are excluded from the pool.
     if [[ ! -f "$TODOS_FILE" ]]; then
         echo "<!-- no todo file at $TODOS_FILE -->"
-        echo "-"
+        echo "_no acquisitions file_"
         return
     fi
-    # Pull bullet items only ("- ..." or "  - ..."), preserving headers (## ...)
-    # so the section structure carries through. Skip code fences and metadata.
-    # Sections whose heading text is fully struck through (## ~~...~~) are
-    # treated as completed and suppressed entirely (heading + bullets).
-    local in_yaml=0 in_code=0 skip_section=0
+
+    local in_yaml=0 in_code=0 skip_section=0 current_section=""
+    local -a candidates=() sections=()
     while IFS= read -r line; do
         case "$line" in
             "---")
@@ -192,27 +195,98 @@ fetch_todos() {
                 ;;
         esac
         [[ $in_yaml -eq 1 || $in_code -eq 1 ]] && continue
-        # Surface section headers (## or ###) and bullet items
         case "$line" in
             "## ~~"*|"### ~~"*)
                 skip_section=1
                 continue
                 ;;
-            "## How to use"*)
+            "## How to use"*|"## Reading revisits"*)
                 skip_section=1
                 continue
                 ;;
             "## "*|"### "*)
                 skip_section=0
-                echo ""
-                echo "$line"
+                current_section="$line"
+                continue
                 ;;
-            "- "*|"  - "*|"~~- "*)
+            "- ~~"*|"  - ~~"*)
+                # Already-acquired (struck through). Skip.
+                continue
+                ;;
+            "- "*|"  - "*)
                 [[ $skip_section -eq 1 ]] && continue
-                echo "$line"
+                [[ -z "$current_section" ]] && continue
+                candidates+=("$line")
+                sections+=("$current_section")
                 ;;
         esac
     done < "$TODOS_FILE"
+
+    local count=${#candidates[@]}
+    if [[ $count -eq 0 ]]; then
+        echo "_no pending acquisitions_"
+        return
+    fi
+
+    # Deterministic per-day pick: same digest all day, rotates by date.
+    local seed idx
+    seed=$(date +%Y%m%d)
+    idx=$(( 10#$seed % count ))
+
+    echo "${sections[$idx]}"
+    echo ""
+    echo "${candidates[$idx]}"
+    echo ""
+    echo "_$count items pending; full list at \`30-Areas/Daily Reading/_pending-acquisitions.md\`_"
+}
+
+fetch_writing_prompt() {
+    # Pick one fiction project per day for the writing-rhythm habit
+    # (~/Writing/Fiction/, one project/day, ≥1k words + housekeeping).
+    # Deterministic per day. Uses a different rotation than the book
+    # pick so the two don't lock-step.
+    local fiction_dir="${FICTION_DIR:-$HOME/Writing/Fiction}"
+    if [[ ! -d "$fiction_dir" ]]; then
+        echo "_fiction folder not found at $fiction_dir_"
+        return
+    fi
+
+    local -a projects=()
+    local entry name
+    while IFS= read -r entry; do
+        name="$(basename "$entry")"
+        # Skip template scaffolds and dotdirs
+        case "$name" in
+            _*|.*) continue ;;
+        esac
+        projects+=("$name")
+    done < <(find "$fiction_dir" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | LC_ALL=C sort)
+
+    local count=${#projects[@]}
+    if [[ $count -eq 0 ]]; then
+        echo "_no fiction projects found in $fiction_dir_"
+        return
+    fi
+
+    local seed idx pick
+    seed=$(date +%Y%m%d)
+    # Multiply by a coprime offset so this rotation differs from the book pick.
+    idx=$(( (10#$seed * 17 + 3) % count ))
+    pick="${projects[$idx]}"
+
+    echo "**Today's pick: \`$pick\`**"
+    echo ""
+    echo "Daily target: housekeeping + ≥1k words on one project."
+    echo ""
+    echo "Choose another from:"
+    local p
+    for p in "${projects[@]}"; do
+        if [[ "$p" == "$pick" ]]; then
+            echo "- **\`$p\`** ← today's random pick"
+        else
+            echo "- \`$p\`"
+        fi
+    done
 }
 
 fetch_news() {
@@ -303,9 +377,13 @@ $(fetch_weather)
 
 > $(fetch_quote)
 
-## Tasks
+## Today's reading pickup
 
 $(fetch_todos)
+
+## Today's writing
+
+$(fetch_writing_prompt)
 
 ## Calendar
 
