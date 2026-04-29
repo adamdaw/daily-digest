@@ -240,6 +240,94 @@ fetch_todos() {
     echo "_$count items pending; full list at \`30-Areas/Daily Reading/_pending-acquisitions.md\`_"
 }
 
+fetch_math() {
+    # Surface today's day-file from the math curriculum at
+    # $VAULT/30-Areas/Daily Math/<phase>/<week>/<YYYY-MM-DD>*.md, if one exists.
+    local math_root="$VAULT/30-Areas/Daily Math"
+    if [[ ! -d "$math_root" ]]; then
+        echo "_no daily-math folder at $math_root_"
+        return
+    fi
+    local match
+    match=$(find "$math_root" -mindepth 3 -maxdepth 3 -type f -name "${DATE}*.md" 2>/dev/null | head -1)
+    if [[ -z "$match" ]]; then
+        local start="2026-05-04"
+        if [[ "$DATE" < "$start" ]]; then
+            local days
+            days=$(( ( $(date -d "$start" +%s) - $(date -d "$DATE" +%s) ) / 86400 ))
+            echo "_curriculum starts $start (${days} days)_"
+        else
+            echo "_no entry for ${DATE} (curriculum may be complete)_"
+        fi
+        return
+    fi
+    local name phase week focus prompt session_type
+    name="$(basename "${match%.md}")"
+    phase=$(awk '/^---$/{c++; if(c==2) exit; next} c==1 && /^phase:[[:space:]]/{sub(/^phase:[[:space:]]*/,""); gsub(/^"|"$/,""); print; exit}' "$match")
+    week=$(awk '/^---$/{c++; if(c==2) exit; next} c==1 && /^week_of_43:[[:space:]]/{sub(/^week_of_43:[[:space:]]*/,""); gsub(/^"|"$/,""); print; exit}' "$match")
+    focus=$(awk '/^---$/{c++; if(c==2) exit; next} c==1 && /^focus:[[:space:]]/{sub(/^focus:[[:space:]]*/,""); gsub(/^"|"$/,""); print; exit}' "$match")
+    prompt=$(awk '/^---$/{c++; if(c==2) exit; next} c==1 && /^prompt:[[:space:]]/{sub(/^prompt:[[:space:]]*/,""); gsub(/^"|"$/,""); print; exit}' "$match")
+    session_type=$(awk '/^---$/{c++; if(c==2) exit; next} c==1 && /^session_type:[[:space:]]/{sub(/^session_type:[[:space:]]*/,""); gsub(/^"|"$/,""); print; exit}' "$match")
+
+    echo "**[[${name}]]**"
+    echo ""
+    if [[ "$session_type" == "weekend-review" ]]; then
+        echo "Phase ${phase} · Week ${week} of 43 · weekend review · 20 min"
+    else
+        echo "Phase ${phase} · Week ${week} of 43 · ${focus} · 1 hr"
+    fi
+    if [[ -n "$prompt" ]]; then
+        echo ""
+        echo "> ${prompt}"
+    fi
+}
+
+fetch_daily_reading() {
+    # Surface today's entry from the structured daily-reading practice at
+    # $VAULT/30-Areas/Daily Reading/<week>/<YYYY-MM-DD>*.md, if one exists.
+    local reading_root="$VAULT/30-Areas/Daily Reading"
+    if [[ ! -d "$reading_root" ]]; then
+        echo "_no daily-reading folder at $reading_root_"
+        return
+    fi
+    local match
+    match=$(find "$reading_root" -mindepth 2 -maxdepth 2 -type f -name "${DATE}*.md" 2>/dev/null | head -1)
+    if [[ -z "$match" ]]; then
+        echo "_no entry scheduled for ${DATE}_"
+        return
+    fi
+    local name work excerpt
+    name="$(basename "${match%.md}")"
+    work=$(awk '
+        /^---$/{ c++; if (c==2) exit; next }
+        c==1 && /^work:[[:space:]]/ {
+            sub(/^work:[[:space:]]*/, "")
+            gsub(/^"|"$/, "")
+            print
+            exit
+        }
+    ' "$match")
+    excerpt=$(awk '
+        /^---$/{ c++; if (c==2) exit; next }
+        c==1 && /^excerpt:[[:space:]]/ {
+            sub(/^excerpt:[[:space:]]*/, "")
+            gsub(/^"|"$/, "")
+            print
+            exit
+        }
+    ' "$match")
+
+    echo "**[[${name}]]**"
+    if [[ -n "$work" ]]; then
+        echo ""
+        echo "$work"
+    fi
+    if [[ -n "$excerpt" ]]; then
+        echo ""
+        echo "Excerpt: $excerpt"
+    fi
+}
+
 fetch_writing_prompt() {
     # Pick one fiction project per day for the writing-rhythm habit
     # (~/Writing/Fiction/, one project/day, ≥1k words + housekeeping).
@@ -377,7 +465,15 @@ $(fetch_weather)
 
 > $(fetch_quote)
 
-## Today's reading pickup
+## Today's daily reading
+
+$(fetch_daily_reading)
+
+## Today's math
+
+$(fetch_math)
+
+## Today's acquisition pick
 
 $(fetch_todos)
 
