@@ -240,6 +240,39 @@ fetch_todos() {
     echo "_$count items pending; full list at \`30-Areas/Daily Reading/_pending-acquisitions.md\`_"
 }
 
+fetch_unitasker() {
+    # Surface the next pending task from Unitasker's /api/focus/peek
+    # endpoint (read-only — does not change app state). Tolerant of
+    # Unitasker being offline.
+    local port="${UNITASKER_PORT:-3000}"
+    local resp
+    if ! resp=$(curl -fsS --max-time 3 "http://localhost:${port}/api/focus/peek" 2>/dev/null); then
+        echo "_Unitasker offline (port ${port})_"
+        return
+    fi
+    if ! command -v jq >/dev/null 2>&1; then
+        echo "_jq required to parse Unitasker response_"
+        return
+    fi
+    local has_focus
+    has_focus=$(echo "$resp" | jq -r '.focus // empty')
+    if [[ -z "$has_focus" ]]; then
+        echo "_no pending tasks in Unitasker_"
+        return
+    fi
+    local project task subtask
+    project=$(echo "$resp" | jq -r '.focus.project.name')
+    task=$(echo "$resp" | jq -r '.focus.task.name')
+    subtask=$(echo "$resp" | jq -r '.focus.subtask.name // empty')
+    if [[ -n "$subtask" ]]; then
+        echo "**${project}** · ${task} · *${subtask}*"
+    else
+        echo "**${project}** · ${task}"
+    fi
+    echo ""
+    echo "Open: [Unitasker focus view](http://localhost:${port}/)"
+}
+
 fetch_math() {
     # Surface today's day-file from the math curriculum at
     # $VAULT/30-Areas/Daily Math/<phase>/<week>/<YYYY-MM-DD>*.md, if one exists.
@@ -482,6 +515,10 @@ $(fetch_todos)
 ## Today's writing
 
 $(fetch_writing_prompt)
+
+## Today's task
+
+$(fetch_unitasker)
 
 ## Calendar
 
