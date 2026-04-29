@@ -57,11 +57,9 @@ OUT="$DAILY_DIR/${DATE}.md"
 
 mkdir -p "$DAILY_DIR"
 
-# Idempotency: skip if today's digest already exists and was written today
-if [[ -f "$OUT" && "$(date -r "$OUT" +%Y-%m-%d)" == "$DATE" ]]; then
-    echo "Digest already present for $DATE; not overwriting." >&2
-    exit 0
-fi
+# Note: --refresh-tasks and idempotency checks live below the function
+# definitions so fetch_unitasker is in scope. Bash parses incrementally,
+# so a function call before its definition would fail.
 
 fetch_weather() {
     local data temp feels desc hi lo attempt plain
@@ -241,34 +239,49 @@ fetch_todos() {
 }
 
 fetch_unitasker() {
-    # Surface the next pending task from Unitasker's /api/focus/peek
-    # endpoint (read-only — does not change app state). Tolerant of
-    # Unitasker being offline.
+    # Surface today's completed work + the next pending pick from Unitasker.
+    # Two read-only endpoints — does not mutate app state. Tolerant of the
+    # server being offline (degrades to a placeholder).
     local port="${UNITASKER_PORT:-3000}"
-    local resp
-    if ! resp=$(curl -fsS --max-time 3 "http://localhost:${port}/api/focus/peek" 2>/dev/null); then
+    local peek_resp wl_resp
+    if ! peek_resp=$(curl -fsS --max-time 3 "http://localhost:${port}/api/focus/peek" 2>/dev/null); then
         echo "_Unitasker offline (port ${port})_"
         return
     fi
+    wl_resp=$(curl -fsS --max-time 3 "http://localhost:${port}/api/work-log/today" 2>/dev/null) || wl_resp='{"completed":[]}'
+
     if ! command -v jq >/dev/null 2>&1; then
         echo "_jq required to parse Unitasker response_"
         return
     fi
+
+    local done_count
+    done_count=$(echo "$wl_resp" | jq '.completed | length')
+    if [[ "$done_count" -gt 0 ]]; then
+        echo "**Done today (${done_count}):**"
+        echo "$wl_resp" | jq -r '.completed[] |
+            "- ~~" + .name + "~~ ("
+            + (if .type == "subtask" then .project_name + " · " + .task_name else .project_name end)
+            + ")"'
+        echo ""
+    fi
+
     local has_focus
-    has_focus=$(echo "$resp" | jq -r '.focus // empty')
+    has_focus=$(echo "$peek_resp" | jq -r '.focus // empty')
     if [[ -z "$has_focus" ]]; then
         echo "_no pending tasks in Unitasker_"
-        return
-    fi
-    local project task subtask
-    project=$(echo "$resp" | jq -r '.focus.project.name')
-    task=$(echo "$resp" | jq -r '.focus.task.name')
-    subtask=$(echo "$resp" | jq -r '.focus.subtask.name // empty')
-    if [[ -n "$subtask" ]]; then
-        echo "**${project}** · ${task} · *${subtask}*"
     else
-        echo "**${project}** · ${task}"
+        local project task subtask
+        project=$(echo "$peek_resp" | jq -r '.focus.project.name')
+        task=$(echo "$peek_resp" | jq -r '.focus.task.name')
+        subtask=$(echo "$peek_resp" | jq -r '.focus.subtask.name // empty')
+        if [[ -n "$subtask" ]]; then
+            echo "**Up next:** **${project}** · ${task} · *${subtask}*"
+        else
+            echo "**Up next:** **${project}** · ${task}"
+        fi
     fi
+
     echo ""
     echo "Open: [Unitasker focus view](http://localhost:${port}/)"
 }
@@ -474,6 +487,42 @@ PYEOF
         fi
     done
 }
+
+# --refresh-tasks: surgically rewrite the "## Today's task" section in
+# today's already-written digest, leaving everything else (weather,
+# quote, news, etc.) untouched. Useful when Unitasker state changes
+# during the day and you want the digest to reflect it without re-
+# hitting the weather / quote / news APIs. Defined here so all
+# fetch_* helpers (incl. fetch_unitasker) are in scope.
+if [[ "${1:-}" == "--refresh-tasks" ]]; then
+    if [[ ! -f "$OUT" ]]; then
+        echo "No digest at $OUT yet; run without --refresh-tasks first." >&2
+        exit 1
+    fi
+    NEW_TASKS=$(fetch_unitasker)
+    NEW_TASKS="$NEW_TASKS" awk '
+        BEGIN { sub_text = ENVIRON["NEW_TASKS"]; in_section = 0 }
+        /^## Today.s task[[:space:]]*$/ {
+            print
+            print ""
+            print sub_text
+            in_section = 1
+            next
+        }
+        in_section && /^## / { in_section = 0; print ""; print; next }
+        !in_section { print }
+    ' "$OUT" > "${OUT}.tmp" && mv "${OUT}.tmp" "$OUT"
+    echo "Refreshed Today's task section in $OUT"
+    exit 0
+fi
+
+# Idempotency: skip if today's digest already exists and was written today.
+# (Placed after --refresh-tasks so the refresh path can run on an existing
+# file; the regen path stops here.)
+if [[ -f "$OUT" && "$(date -r "$OUT" +%Y-%m-%d)" == "$DATE" ]]; then
+    echo "Digest already present for $DATE; not overwriting." >&2
+    exit 0
+fi
 
 # Render to temp, move atomically so Obsidian never sees a half-written file
 TMP=$(mktemp)
