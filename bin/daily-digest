@@ -280,6 +280,8 @@ fetch_math() {
         echo ""
         echo "> ${prompt}"
     fi
+    echo ""
+    echo "Reference: [Paul's Online Math Notes](https://tutorial.math.lamar.edu/)"
 }
 
 fetch_daily_reading() {
