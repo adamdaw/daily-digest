@@ -379,7 +379,7 @@ fetch_daily_reading() {
         echo "Excerpt: $excerpt"
     fi
     echo ""
-    echo "_After reading: advance the Library card for this text (\`captured → inspected\`), link this entry in the card, and update the terms file._"
+    echo "_After reading: log this excerpt in the Library card (\`excerpts_read\` + link to this entry), and update the terms file. Do not advance card state — that requires the whole work._"
 }
 
 fetch_writing_prompt() {
