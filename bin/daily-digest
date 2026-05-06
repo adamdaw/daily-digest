@@ -50,7 +50,7 @@ fi
 
 DATE="$(date +%Y-%m-%d)"
 LONG_DATE="$(date '+%A, %B %-d, %Y')"
-DAILY_DIR="$VAULT/$DAILY_SUBDIR"
+DAILY_DIR="$VAULT/$DAILY_SUBDIR/$DATE"
 QUOTES_FILE="$VAULT/$QUOTES_PATH"
 TODOS_FILE="$VAULT/$TODOS_PATH"
 OUT="$DAILY_DIR/${DATE}.md"
@@ -118,7 +118,9 @@ fetch_prs() {
 
     local authored review
     authored=$(gh search prs --author="$GH_USER" --state=open --limit 10 --json url,title,repository 2>/dev/null || echo "[]")
+    authored=$(echo "$authored" | jq '[.[] | select(.repository.nameWithOwner | IN("StellarNotions/train-a-dog-with-javascript", "dankantor/pilotship-integrations") | not)]')
     review=$(gh search prs --review-requested="$GH_USER" --state=open --limit 10 --json url,title,repository 2>/dev/null || echo "[]")
+    review=$(echo "$review" | jq '[.[] | select(.repository.nameWithOwner | IN("StellarNotions/train-a-dog-with-javascript", "dankantor/pilotship-integrations") | not)]')
 
     echo "**Authored (open):**"
     if [[ "$(echo "$authored" | jq 'length')" == "0" ]]; then
@@ -275,7 +277,9 @@ fetch_unitasker() {
         project=$(echo "$peek_resp" | jq -r '.focus.project.name')
         task=$(echo "$peek_resp" | jq -r '.focus.task.name')
         subtask=$(echo "$peek_resp" | jq -r '.focus.subtask.name // empty')
-        if [[ -n "$subtask" ]]; then
+        if [[ "$project" == "Library — pending acquisitions" ]]; then
+            echo "_next task is a library acquisition — see Today's acquisition pick above_"
+        elif [[ -n "$subtask" ]]; then
             echo "**Up next:** **${project}** · ${task} · *${subtask}*"
         else
             echo "**Up next:** **${project}** · ${task}"
@@ -374,6 +378,8 @@ fetch_daily_reading() {
         echo ""
         echo "Excerpt: $excerpt"
     fi
+    echo ""
+    echo "_After reading: advance the Library card for this text (\`captured → inspected\`), link this entry in the card, and update the terms file._"
 }
 
 fetch_writing_prompt() {
@@ -423,6 +429,68 @@ fetch_writing_prompt() {
             echo "- \`$p\`"
         fi
     done
+}
+
+push_remarkable_reading() {
+    # Convert today's reading note to PDF and push it plus the source book to
+    # /Daily Reading/ on the reMarkable. Non-fatal: logs to stderr, returns 0.
+    local reading_root="$VAULT/30-Areas/Daily Reading"
+    local match name tmp_pdf source_link source_abs
+
+    match=$(find "$reading_root" -mindepth 2 -maxdepth 2 -type f -name "${DATE}*.md" 2>/dev/null | head -1)
+    if [[ -z "$match" ]]; then
+        echo "remarkable: no reading note for ${DATE}, skipping push" >&2
+        return 0
+    fi
+
+    if ! command -v pandoc >/dev/null 2>&1 || ! command -v rmapi >/dev/null 2>&1; then
+        echo "remarkable: pandoc or rmapi not found, skipping push" >&2
+        return 0
+    fi
+
+    rmapi mkdir "/Daily Reading" >/dev/null 2>&1 || true
+    rmapi mkdir "/Daily Reading/Daily Notes" >/dev/null 2>&1 || true
+    rmapi mkdir "/Daily Reading/Library" >/dev/null 2>&1 || true
+
+    # Push the prep note as PDF into Daily Notes
+    name="$(basename "${match%.md}")"
+    tmp_pdf="/tmp/${name}.pdf"
+    if pandoc "$match" --pdf-engine=pdflatex --variable geometry:margin=1.5cm -o "$tmp_pdf" 2>/dev/null; then
+        if rmapi put "$tmp_pdf" "/Daily Reading/Daily Notes/" >/dev/null 2>&1; then
+            echo "remarkable: uploaded ${name}.pdf to /Daily Reading/Daily Notes/" >&2
+        else
+            echo "remarkable: prep note upload failed" >&2
+        fi
+        rm -f "$tmp_pdf"
+    else
+        echo "remarkable: pandoc conversion failed for $match" >&2
+    fi
+
+    # Push the source book (EPUB/PDF) from ~/Library into Library
+    source_link=$(awk '
+        /^---$/{ c++; if (c==2) exit; next }
+        c==1 && /^source:[[:space:]]/ {
+            sub(/^source:[[:space:]]*/, "")
+            gsub(/^"|"$/, "")
+            gsub(/^\[\[|\]\]$/, "")
+            print; exit
+        }
+    ' "$match")
+
+    if [[ -n "$source_link" ]]; then
+        source_abs="$(realpath "$(dirname "$match")/${source_link}" 2>/dev/null || true)"
+        if [[ -f "$source_abs" ]]; then
+            if rmapi put "$source_abs" "/Daily Reading/Library/" >/dev/null 2>&1; then
+                echo "remarkable: uploaded $(basename "$source_abs") to /Daily Reading/Library/" >&2
+            else
+                echo "remarkable: source book upload failed" >&2
+            fi
+        else
+            echo "remarkable: source not found at $source_abs" >&2
+        fi
+    fi
+
+    return 0
 }
 
 fetch_news() {
@@ -516,6 +584,11 @@ if [[ "${1:-}" == "--refresh-tasks" ]]; then
     exit 0
 fi
 
+if [[ "${1:-}" == "--push-reading" ]]; then
+    push_remarkable_reading
+    exit 0
+fi
+
 # Idempotency: skip if today's digest already exists and was written today.
 # (Placed after --refresh-tasks so the refresh path can run on an existing
 # file; the regen path stops here.)
@@ -594,3 +667,4 @@ EOF
 mv "$TMP" "$OUT"
 trap - EXIT
 echo "Wrote digest to $OUT"
+push_remarkable_reading
