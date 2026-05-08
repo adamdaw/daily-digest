@@ -298,17 +298,17 @@ fetch_math() {
         echo "_no daily-math folder at $math_root_"
         return
     fi
+    local start="2026-05-11"
+    if [[ "$DATE" < "$start" ]]; then
+        local days
+        days=$(( ( $(date -d "$start" +%s) - $(date -d "$DATE" +%s) ) / 86400 ))
+        echo "_curriculum starts $start (${days} days)_"
+        return
+    fi
     local match
     match=$(find "$math_root" -mindepth 3 -maxdepth 3 -type f -name "${DATE}*.md" 2>/dev/null | head -1)
     if [[ -z "$match" ]]; then
-        local start="2026-05-04"
-        if [[ "$DATE" < "$start" ]]; then
-            local days
-            days=$(( ( $(date -d "$start" +%s) - $(date -d "$DATE" +%s) ) / 86400 ))
-            echo "_curriculum starts $start (${days} days)_"
-        else
-            echo "_no entry for ${DATE} (curriculum may be complete)_"
-        fi
+        echo "_no entry for ${DATE} (curriculum may be complete)_"
         return
     fi
     local name phase week focus prompt session_type
