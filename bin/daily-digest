@@ -389,7 +389,7 @@ fetch_writing_prompt() {
     # pick so the two don't lock-step.
     local fiction_dir="${FICTION_DIR:-$HOME/Writing/Fiction}"
     if [[ ! -d "$fiction_dir" ]]; then
-        echo "_fiction folder not found at $fiction_dir_"
+        echo "_fiction folder not found at ${fiction_dir}_"
         return
     fi
 
@@ -406,7 +406,7 @@ fetch_writing_prompt() {
 
     local count=${#projects[@]}
     if [[ $count -eq 0 ]]; then
-        echo "_no fiction projects found in $fiction_dir_"
+        echo "_no fiction projects found in ${fiction_dir}_"
         return
     fi
 
