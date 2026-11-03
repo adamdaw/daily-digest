@@ -493,6 +493,24 @@ push_remarkable_reading() {
     return 0
 }
 
+fetch_backups() {
+    # Reads the success stamps written by bazzite's restic-backup job.
+    local dir="${BACKUP_STATUS_DIR:-/var/lib/restic-backup}" name stamp age
+    for name in local proton; do
+        if [[ ! -s "$dir/$name-ok" ]]; then
+            echo "- ⚠️ **${name}:** no successful backup recorded"
+            continue
+        fi
+        stamp=$(<"$dir/$name-ok")
+        age=$(( ( $(date +%s) - $(date -d "$stamp" +%s) ) / 3600 ))
+        if (( age > 26 )); then
+            echo "- ⚠️ **${name}:** last good backup ${age} h ago (${stamp})"
+        else
+            echo "- ${name}: OK, ${age} h ago"
+        fi
+    done
+}
+
 fetch_news() {
     if ! declare -p NEWS_FEEDS >/dev/null 2>&1 || [[ ${#NEWS_FEEDS[@]} -eq 0 ]]; then
         echo "<!-- placeholder: set NEWS_FEEDS in $CONFIG_FILE -->"
@@ -653,6 +671,10 @@ $(fetch_git_activity)
 ## GitHub PRs
 
 $(fetch_prs)
+
+## Backups
+
+$(fetch_backups)
 
 ## News
 
