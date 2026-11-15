@@ -509,6 +509,70 @@ fetch_backups() {
             echo "- ${name}: OK, ${age} h ago"
         fi
     done
+
+    # Stale thresholds (hours) for the daily jobs below. acheron's restic run
+    # starts 02:30 and can finish late, so it gets the most slack.
+    local library_max_h=26 acheron_restic_max_h=30 acheron_mirror_max_h=28
+
+    # bazzite's library mirror (user timer, daily 05:30).
+    local lib_dir="${LIBRARY_MIRROR_STATUS_DIR:-$HOME/.local/state/library-mirror}"
+    stamp=""
+    [[ -r "$lib_dir/library-mirror-ok" ]] && stamp=$(<"$lib_dir/library-mirror-ok")
+    stamp_status library-mirror "$stamp" "$library_max_h"
+
+    # acheron's stamps, read in one ssh call. The remote prints one line per
+    # path: "ok <stamp>", "missing", or "unreadable" (exists, or its directory
+    # can't be entered, but we can't read it).
+    local host="${ACHERON_HOST:-acheron}"
+    local restic_dir="${ACHERON_BACKUP_STATUS_DIR:-/var/lib/restic-backup}"
+    local mirror_stamp="${ACHERON_MIRROR_STAMP:-/var/lib/gitmirror/mirror-ok}"
+    local out
+    if ! out=$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" \
+            "sh -s -- $(printf '%q ' "$restic_dir/proton-ok" "$restic_dir/local-ok" "$mirror_stamp")" \
+            2>/dev/null <<'SH'
+for f in "$@"; do
+    if [ -r "$f" ]; then
+        printf 'ok %s\n' "$(cat "$f")"
+    elif [ -e "$f" ] || { [ -d "${f%/*}" ] && [ ! -x "${f%/*}" ]; }; then
+        echo unreadable
+    else
+        echo missing
+    fi
+done
+SH
+    ); then
+        echo "- ⚠️ **${host}:** unreachable over ssh; backup and mirror status unknown"
+        return 0
+    fi
+
+    local -a lines labels=("$host proton" "$host local" "$host git-mirror")
+    local -a maxes=("$acheron_restic_max_h" "$acheron_restic_max_h" "$acheron_mirror_max_h")
+    mapfile -t lines <<<"$out"
+    local i
+    for i in 0 1 2; do
+        if [[ "${lines[i]:-}" == unreadable ]]; then
+            echo "- ⚠️ **${labels[i]}:** stamp exists but is not readable (permissions)"
+            continue
+        fi
+        stamp=""
+        [[ "${lines[i]:-}" == "ok "* ]] && stamp="${lines[i]#ok }"
+        stamp_status "${labels[i]}" "$stamp" "${maxes[i]}"
+    done
+}
+
+# Prints one Backups line for a success stamp: missing (empty), stale, or OK.
+stamp_status() {
+    local name="$1" stamp="$2" max_h="$3" age
+    if [[ -z "$stamp" ]]; then
+        echo "- ⚠️ **${name}:** no successful run recorded"
+        return
+    fi
+    age=$(( ( $(date +%s) - $(date -d "$stamp" +%s) ) / 3600 ))
+    if (( age > max_h )); then
+        echo "- ⚠️ **${name}:** last good run ${age} h ago (${stamp})"
+    else
+        echo "- ${name}: OK, ${age} h ago"
+    fi
 }
 
 fetch_news() {
