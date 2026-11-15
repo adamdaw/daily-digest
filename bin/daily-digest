@@ -517,8 +517,14 @@ fetch_backups() {
     # bazzite's library mirror (user timer, daily 05:30).
     local lib_dir="${LIBRARY_MIRROR_STATUS_DIR:-$HOME/.local/state/library-mirror}"
     stamp=""
-    [[ -r "$lib_dir/library-mirror-ok" ]] && stamp=$(<"$lib_dir/library-mirror-ok")
-    stamp_status library-mirror "$stamp" "$library_max_h"
+    if [[ -r "$lib_dir/library-mirror-ok" ]]; then
+        stamp=$(<"$lib_dir/library-mirror-ok")
+        stamp_status library-mirror "$stamp" "$library_max_h"
+    elif [[ -e "$lib_dir/library-mirror-ok" || ( -d "$lib_dir" && ! -x "$lib_dir" ) ]]; then
+        echo "- ⚠️ **library-mirror:** stamp exists but is not readable (permissions)"
+    else
+        stamp_status library-mirror "" "$library_max_h"
+    fi
 
     # acheron's stamps, read in one ssh call. The remote prints one line per
     # path: "ok <stamp>", "missing", or "unreadable" (exists, or its directory
@@ -560,14 +566,19 @@ SH
     done
 }
 
-# Prints one Backups line for a success stamp: missing (empty), stale, or OK.
+# Prints one Backups line for a success stamp: missing (empty), unparseable,
+# stale, or OK.
 stamp_status() {
-    local name="$1" stamp="$2" max_h="$3" age
+    local name="$1" stamp="$2" max_h="$3" age epoch
     if [[ -z "$stamp" ]]; then
         echo "- ⚠️ **${name}:** no successful run recorded"
         return
     fi
-    age=$(( ( $(date +%s) - $(date -d "$stamp" +%s) ) / 3600 ))
+    if ! epoch=$(date -d "$stamp" +%s 2>/dev/null); then
+        echo "- ⚠️ **${name}:** stamp unparseable (${stamp})"
+        return
+    fi
+    age=$(( ( $(date +%s) - epoch ) / 3600 ))
     if (( age > max_h )); then
         echo "- ⚠️ **${name}:** last good run ${age} h ago (${stamp})"
     else
