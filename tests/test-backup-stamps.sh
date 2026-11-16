@@ -47,7 +47,7 @@ check() {  # check <description> <pattern> <<< output
 
 check_count() {  # check_count <description> <expected> <actual>
     local desc="$1" expected="$2" actual="$3"
-    if [[ "$actual" == "$expected" ]]; then
+    if [[ "$actual" =~ ^[0-9]+$ ]] && (( actual == expected )); then
         pass=$((pass + 1))
     else
         fail=$((fail + 1))
@@ -161,6 +161,13 @@ else
     out=$(fetch_backups)
     check "library file not readable" "- ⚠️ **library-mirror:** stamp exists but is not readable (permissions)" <<<"$out"
     check "acheron still reported after unreadable library" "- acheron-test proton: OK, 2 h ago" <<<"$out"
+    # bazzite local stamp exists but can't be read: reported as missing (it
+    # does not yet say "not readable", unlike the checks below).
+    setup bazzite-unreadable-file
+    chmod 000 "$D/bazzite-restic/local-ok"
+    out=$(fetch_backups 2>/dev/null)
+    check "bazzite local not readable" "- ⚠️ **local:** no successful backup recorded" <<<"$out"
+    check "proton after unreadable local" "- proton: OK, 1 h ago" <<<"$out"
     setup library-unreadable-dir
     stamp_hours_ago "$D/library/library-mirror-ok" 1
     chmod 000 "$D/library"
