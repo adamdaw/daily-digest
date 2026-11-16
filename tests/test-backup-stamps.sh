@@ -45,6 +45,16 @@ check() {  # check <description> <pattern> <<< output
     fi
 }
 
+check_count() {  # check_count <description> <expected> <actual>
+    local desc="$1" expected="$2" actual="$3"
+    if [[ "$actual" == "$expected" ]]; then
+        pass=$((pass + 1))
+    else
+        fail=$((fail + 1))
+        printf 'FAIL: %s\n  expected count: %s\n  got: %s\n' "$desc" "$expected" "$actual"
+    fi
+}
+
 stamp_hours_ago() { date -Is -d "-$2 hours" > "$1"; }
 
 # Each case gets its own fixture tree and env.
@@ -74,9 +84,37 @@ check "fresh library"  "- library-mirror: OK, 1 h ago" <<<"$out"
 check "fresh proton"   "- acheron-test proton: OK, 3 h ago" <<<"$out"
 check "fresh local"    "- acheron-test local: OK, 3 h ago" <<<"$out"
 check "fresh mirror"   "- acheron-test git-mirror: OK, 5 h ago" <<<"$out"
-check "no warnings"    "$(printf '%s\n' "$out" | grep -c '⚠️' | sed 's/^0$/no-warnings/')" <<<"no-warnings"
-check "one ssh call"   "1" <<<"$(wc -l < "$FAKE_SSH_LOG")"
+check_count "no warnings" 0 "$(grep -c '⚠️' <<<"$out")"
+check_count "one ssh call" 1 "$(wc -l < "$FAKE_SSH_LOG")"
 check "host override + batch mode" "-o BatchMode=yes -o ConnectTimeout=10 acheron-test" < "$FAKE_SSH_LOG"
+
+# --- bazzite restic stamps (local, proton) --------------------------------------
+setup bazzite-fresh
+out=$(fetch_backups)
+check "bazzite local fresh"  "- local: OK, 1 h ago" <<<"$out"
+check "bazzite proton fresh" "- proton: OK, 1 h ago" <<<"$out"
+
+setup bazzite-stale
+stamp_hours_ago "$D/bazzite-restic/local-ok" 27
+stamp_hours_ago "$D/bazzite-restic/proton-ok" 26
+out=$(fetch_backups)
+check "bazzite local stale"       "- ⚠️ **local:** last good backup 27 h ago (" <<<"$out"
+check "bazzite proton within 26 h" "- proton: OK, 26 h ago" <<<"$out"
+
+setup bazzite-missing
+rm "$D/bazzite-restic/local-ok"
+: > "$D/bazzite-restic/proton-ok"
+out=$(fetch_backups)
+check "bazzite local missing" "- ⚠️ **local:** no successful backup recorded" <<<"$out"
+check "bazzite proton empty"  "- ⚠️ **proton:** no successful backup recorded" <<<"$out"
+
+setup bazzite-unparseable
+echo "not a date" > "$D/bazzite-restic/local-ok"
+stamp_hours_ago "$D/library/library-mirror-ok" 1
+out=$(fetch_backups)
+check "bazzite local unparseable" "- ⚠️ **local:** stamp unparseable (not a date)" <<<"$out"
+check "proton after bad local"    "- proton: OK, 1 h ago" <<<"$out"
+check "library after bad local"   "- library-mirror: OK, 1 h ago" <<<"$out"
 
 # --- stale (and just under each threshold) ------------------------------------
 setup stale
@@ -178,7 +216,7 @@ out=$(fetch_backups) || status=$?
 check "unreachable warning" "- ⚠️ **acheron-test:** unreachable over ssh; backup and mirror status unknown" <<<"$out"
 check "local stamps still reported" "- library-mirror: OK, 1 h ago" <<<"$out"
 check "returns 0" "status=0" <<<"status=$status"
-check "only one acheron line" "1" <<<"$(grep -c acheron-test <<<"$out")"
+check_count "only one acheron line" 1 "$(grep -c acheron-test <<<"$out")"
 
 echo "passed: $pass, failed: $fail"
 (( fail == 0 ))
