@@ -295,7 +295,7 @@ fetch_math() {
     # $VAULT/30-Areas/Daily Math/<phase>/<week>/<YYYY-MM-DD>*.md, if one exists.
     local math_root="$VAULT/30-Areas/Daily Math"
     if [[ ! -d "$math_root" ]]; then
-        echo "_no daily-math folder at $math_root_"
+        echo "_no daily-math folder at ${math_root}_"
         return
     fi
     local start="2026-05-11"
@@ -339,7 +339,7 @@ fetch_daily_reading() {
     # $VAULT/30-Areas/Daily Reading/<week>/<YYYY-MM-DD>*.md, if one exists.
     local reading_root="$VAULT/30-Areas/Daily Reading"
     if [[ ! -d "$reading_root" ]]; then
-        echo "_no daily-reading folder at $reading_root_"
+        echo "_no daily-reading folder at ${reading_root}_"
         return
     fi
     local match
@@ -495,19 +495,11 @@ push_remarkable_reading() {
 
 fetch_backups() {
     # Reads the success stamps written by bazzite's restic-backup job.
-    local dir="${BACKUP_STATUS_DIR:-/var/lib/restic-backup}" name stamp age
+    local dir="${BACKUP_STATUS_DIR:-/var/lib/restic-backup}" name stamp
     for name in local proton; do
-        if [[ ! -s "$dir/$name-ok" ]]; then
-            echo "- ⚠️ **${name}:** no successful backup recorded"
-            continue
-        fi
-        stamp=$(<"$dir/$name-ok")
-        age=$(( ( $(date +%s) - $(date -d "$stamp" +%s) ) / 3600 ))
-        if (( age > 26 )); then
-            echo "- ⚠️ **${name}:** last good backup ${age} h ago (${stamp})"
-        else
-            echo "- ${name}: OK, ${age} h ago"
-        fi
+        stamp=""
+        [[ -s "$dir/$name-ok" ]] && stamp=$(<"$dir/$name-ok")
+        stamp_status "$name" "$stamp" 26 backup
     done
 
     # Stale thresholds (hours) for the daily jobs below. acheron's restic run
@@ -567,11 +559,12 @@ SH
 }
 
 # Prints one Backups line for a success stamp: missing (empty), unparseable,
-# stale, or OK.
+# stale, or OK. The optional fourth argument names what succeeded ("run" by
+# default; bazzite's restic stamps say "backup").
 stamp_status() {
-    local name="$1" stamp="$2" max_h="$3" age epoch
+    local name="$1" stamp="$2" max_h="$3" what="${4:-run}" age epoch
     if [[ -z "$stamp" ]]; then
-        echo "- ⚠️ **${name}:** no successful run recorded"
+        echo "- ⚠️ **${name}:** no successful ${what} recorded"
         return
     fi
     if ! epoch=$(date -d "$stamp" +%s 2>/dev/null); then
@@ -580,7 +573,7 @@ stamp_status() {
     fi
     age=$(( ( $(date +%s) - epoch ) / 3600 ))
     if (( age > max_h )); then
-        echo "- ⚠️ **${name}:** last good run ${age} h ago (${stamp})"
+        echo "- ⚠️ **${name}:** last good ${what} ${age} h ago (${stamp})"
     else
         echo "- ${name}: OK, ${age} h ago"
     fi
