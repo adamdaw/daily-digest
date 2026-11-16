@@ -295,7 +295,7 @@ fetch_math() {
     # $VAULT/30-Areas/Daily Math/<phase>/<week>/<YYYY-MM-DD>*.md, if one exists.
     local math_root="$VAULT/30-Areas/Daily Math"
     if [[ ! -d "$math_root" ]]; then
-        echo "_no daily-math folder at $math_root_"
+        echo "_no daily-math folder at ${math_root}_"
         return
     fi
     local start="2026-05-11"
@@ -339,7 +339,7 @@ fetch_daily_reading() {
     # $VAULT/30-Areas/Daily Reading/<week>/<YYYY-MM-DD>*.md, if one exists.
     local reading_root="$VAULT/30-Areas/Daily Reading"
     if [[ ! -d "$reading_root" ]]; then
-        echo "_no daily-reading folder at $reading_root_"
+        echo "_no daily-reading folder at ${reading_root}_"
         return
     fi
     local match
