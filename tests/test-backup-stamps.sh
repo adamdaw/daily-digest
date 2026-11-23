@@ -9,7 +9,7 @@ set -euo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Pull just the two functions out of the script; sourcing it would run it.
 # shellcheck source=/dev/null
-source <(sed -n '/^fetch_backups() {/,/^}/p; /^stamp_status() {/,/^}/p' "$repo/bin/daily-digest")
+source <(sed -n '/^fetch_backups() {/,/^}/p; /^stamp_status() {/,/^}/p; /^smart_escape() {/,/^}/p' "$repo/bin/daily-digest")
 
 work="$(mktemp -d)"
 trap 'chmod -R u+rwx "$work"; rm -rf "$work"' EXIT
@@ -30,7 +30,12 @@ while [[ "$1" == -o ]]; do shift 2; done
 shift
 exec bash -c "$*"
 SSH
-chmod +x "$work/bin/ssh"
+cat > "$work/bin/systemctl" <<'SYSTEMCTL'
+#!/usr/bin/env bash
+printf '%s\n' "${FAKE_SMART_STATE:-active}"
+[[ "${FAKE_SMART_STATE:-active}" == active ]]
+SYSTEMCTL
+chmod +x "$work/bin/ssh" "$work/bin/systemctl"
 PATH="$work/bin:$PATH"
 
 pass=0 fail=0
@@ -65,9 +70,10 @@ setup() {
     export LIBRARY_MIRROR_STATUS_DIR="$d/library"
     export ACHERON_BACKUP_STATUS_DIR="$d/acheron-restic"
     export ACHERON_MIRROR_STAMP="$d/gitmirror/mirror-ok"
+    export ACHERON_SMART_ALERT_DIR="$d/smart"
     export ACHERON_HOST=acheron-test
     export FAKE_SSH_LOG="$d/ssh.log"
-    unset FAKE_SSH_FAIL FAKE_SSH_OUTPUT
+    unset FAKE_SSH_FAIL FAKE_SSH_OUTPUT FAKE_SMART_STATE
     stamp_hours_ago "$d/bazzite-restic/local-ok" 1
     stamp_hours_ago "$d/bazzite-restic/proton-ok" 1
     D="$d"
@@ -220,10 +226,34 @@ stamp_hours_ago "$D/library/library-mirror-ok" 1
 export FAKE_SSH_FAIL=1
 status=0
 out=$(fetch_backups) || status=$?
-check "unreachable warning" "- ⚠️ **acheron-test:** unreachable over ssh; backup and mirror status unknown" <<<"$out"
+check "unreachable warning" "- ⚠️ **acheron-test:** unreachable over ssh; backup, mirror and SMART status unknown" <<<"$out"
 check "local stamps still reported" "- library-mirror: OK, 1 h ago" <<<"$out"
 check "returns 0" "status=0" <<<"status=$status"
 check_count "only one acheron line" 1 "$(grep -c acheron-test <<<"$out")"
+
+# --- SMART alerts -------------------------------------------------------------
+setup smart
+out=$(fetch_backups)
+check "missing SMART directory" "- acheron-test SMART: OK" <<<"$out"
+mkdir "$ACHERON_SMART_ALERT_DIR"
+out=$(fetch_backups)
+check "empty SMART directory" "- acheron-test SMART: OK" <<<"$out"
+printf '%s\n' 'time=2026-01-01' 'device=/dev/sda' 'type=health' 'message=Disk failing' > "$ACHERON_SMART_ALERT_DIR/sda.alert"
+out=$(fetch_backups)
+check "one alert" '- ⚠️ **acheron-test SMART:** /dev/sda health since 2026\-01\-01: Disk failing' <<<"$out"
+printf '%s\n' 'time=now' 'device=/dev/nvme0' 'type=error' 'message=Second' > "$ACHERON_SMART_ALERT_DIR/nvme0.alert"
+out=$(fetch_backups)
+check_count "two alerts" 2 "$(grep -c 'acheron-test SMART:' <<<"$out")"
+printf '%s\n' 'bad=data' > "$ACHERON_SMART_ALERT_DIR/broken.alert"
+out=$(fetch_backups)
+check "malformed alert" 'malformed alert file broken\.alert' <<<"$out"
+printf '%s\n' 'time=now' 'device=/dev/sda' 'type=health' 'message=<tag> *bold* [link](url) & `code`' > "$ACHERON_SMART_ALERT_DIR/sda.alert"
+out=$(fetch_backups)
+check "escaped alert" '&lt;tag&gt; \*bold\* \[link\]\(url\) &amp; \`code\`' <<<"$out"
+export FAKE_SMART_STATE=inactive
+out=$(fetch_backups)
+check "inactive SMART" 'monitoring is not running (state: inactive)' <<<"$out"
+check_count "SMART still uses one ssh call per invocation" 7 "$(wc -l < "$FAKE_SSH_LOG")"
 
 echo "passed: $pass, failed: $fail"
 (( fail == 0 ))
