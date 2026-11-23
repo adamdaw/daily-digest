@@ -524,11 +524,13 @@ fetch_backups() {
     local host="${ACHERON_HOST:-acheron}"
     local restic_dir="${ACHERON_BACKUP_STATUS_DIR:-/var/lib/restic-backup}"
     local mirror_stamp="${ACHERON_MIRROR_STAMP:-/var/lib/gitmirror/mirror-ok}"
+    local smart_dir="${ACHERON_SMART_ALERT_DIR:-/var/lib/smart-alert}"
+    local smart_service="${ACHERON_SMART_SERVICE:-smartmontools}"
     local out
     if ! out=$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" \
-            "sh -s -- $(printf '%q ' "$restic_dir/proton-ok" "$restic_dir/local-ok" "$mirror_stamp")" \
+            "sh -s -- $(printf '%q ' "$restic_dir/proton-ok" "$restic_dir/local-ok" "$mirror_stamp" "$smart_dir" "$smart_service")" \
             2>/dev/null <<'SH'
-for f in "$@"; do
+for f in "$1" "$2" "$3"; do
     if [ -r "$f" ]; then
         printf 'ok %s\n' "$(cat "$f")"
     elif [ -e "$f" ] || { [ -d "${f%/*}" ] && [ ! -x "${f%/*}" ]; }; then
@@ -537,9 +539,21 @@ for f in "$@"; do
         echo missing
     fi
 done
+state=$(systemctl is-active "$5" 2>/dev/null) || :
+printf 'service %s\n' "${state:-unknown}"
+for f in "$4"/*.alert; do
+    [ -e "$f" ] || continue
+    name=$(printf '%s' "${f##*/}" | base64 | tr -d '\n')
+    if [ -f "$f" ] && [ -r "$f" ]; then
+        data=$(base64 < "$f" | tr -d '\n')
+        printf 'alert %s %s\n' "$name" "$data"
+    else
+        printf 'alert %s !\n' "$name"
+    fi
+done
 SH
     ); then
-        echo "- ⚠️ **${host}:** unreachable over ssh; backup and mirror status unknown"
+        echo "- ⚠️ **${host}:** unreachable over ssh; backup, mirror and SMART status unknown"
         return 0
     fi
 
@@ -556,6 +570,49 @@ SH
         [[ "${lines[i]:-}" == "ok "* ]] && stamp="${lines[i]#ok }"
         stamp_status "${labels[i]}" "$stamp" "${maxes[i]}"
     done
+
+    local state="${lines[3]:-}" record encoded_name encoded_data name data
+    local -a fields
+    local alerts=0
+    if [[ "$state" == "service "* ]]; then state=${state#service }; else state=unknown; fi
+    if [[ "$state" != active ]]; then
+        state=$(smart_escape "$state")
+        echo "- ⚠️ **${host} SMART:** monitoring is not running (state: ${state})"
+    fi
+    for record in "${lines[@]:4}"; do
+        [[ "$record" == "alert "* ]] || continue
+        alerts=$((alerts + 1))
+        record=${record#alert }
+        encoded_name=${record%% *}
+        encoded_data=${record#* }
+        name=$(printf '%s' "$encoded_name" | base64 -d 2>/dev/null) || name=unknown
+        name=$(smart_escape "$name")
+        fields=()
+        if [[ "$encoded_data" != '!' ]] && data=$(printf '%s' "$encoded_data" | base64 -d 2>/dev/null && printf ' .'); then
+            data=${data% .}
+            mapfile -t fields < <(printf '%s' "$data")
+        fi
+        if (( ${#fields[@]} != 4 )) || [[ ${fields[0]:-} != time=* || ${fields[1]:-} != device=* || ${fields[2]:-} != type=* || ${fields[3]:-} != message=* ]]; then
+            echo "- ⚠️ **${host} SMART:** malformed alert file ${name}"
+            continue
+        fi
+        local time device type message
+        time=$(smart_escape "${fields[0]#time=}")
+        device=$(smart_escape "${fields[1]#device=}")
+        type=$(smart_escape "${fields[2]#type=}")
+        message=${fields[3]#message=}
+        if (( ${#message} > 200 )); then message="${message:0:200}…"; fi
+        message=$(smart_escape "$message")
+        echo "- ⚠️ **${host} SMART:** ${device} ${type} since ${time}: ${message}"
+    done
+    if (( alerts == 0 )) && [[ "$state" == active ]]; then
+        echo "- ${host} SMART: OK"
+    fi
+}
+
+# Escape untrusted alert text for Markdown and strip control characters.
+smart_escape() {
+    printf '%s' "$1" | LC_ALL=C tr -d '\000-\037\177' | sed -e 's/\&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/[][\\`*_{}()#!+.|~-]/\\&/g'
 }
 
 # Prints one Backups line for a success stamp: missing (empty), unparseable,
